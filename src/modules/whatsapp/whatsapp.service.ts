@@ -1,38 +1,38 @@
 import { Injectable } from '@nestjs/common';
 import { Boom } from '@hapi/boom'
 
-import makeWASocket, { DisconnectReason, useMultiFileAuthState } from '@whiskeysockets/baileys'
-
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { WhatsappGateway } from './whatsapp.gateway';
 @Injectable()
 export class WhatsappService {
+  private sock;
 
+  constructor(private readonly whatsappGateway: WhatsappGateway) { }
   async connectToWhatsApp() {
-
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
-
-    const sock = makeWASocket({
+    const { state, saveCreds } = await useMultiFileAuthState('./auth_data');
+    const { version, isLatest } = await fetchLatestBaileysVersion()
+    this.sock = makeWASocket({
+      auth: state,
       printQRInTerminal: true,
-      auth: state
-    })
+    });
 
-    sock.ev.on('connection.update', (update) => {
-      const { connection, lastDisconnect } = update
-      if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut
-        console.log('connection closed due to ', lastDisconnect.error, ', reconnecting ', shouldReconnect)
-        // reconnect if not logged out
-        if (shouldReconnect) {
-          this.connectToWhatsApp()
-        }
-      } else if (connection === 'open') {
-        console.log('opened connection')
-      }
-    })
-    sock.ev.on('messages.upsert', async m => {
-      console.log(JSON.stringify(m, undefined, 2))
+    this.sock.ev.on('creds.update', saveCreds);
 
-      console.log('replying to', m.messages[0].key.remoteJid)
-      await sock.sendMessage(m.messages[0].key.remoteJid!, { text: 'Hello there!' })
-    })
+    this.sock.ev.on('messages.upsert', (message) => {
+      console.log('New message received:', message);
+      // Emitir el mensaje a los clientes conectados
+      this.whatsappGateway.sendMessageToClients(message);
+    });
+
   }
+
+  async sendMessage(jid: string, message: string) {
+    try {
+      await this.sock.sendMessage(jid, { text: message });
+      console.log(`Message sent to ${jid}`);
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  }
+
 }
